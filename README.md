@@ -293,6 +293,7 @@ new EasyDl(url, dest, options);
 - `retryBackoff` - Incremental back-off in ms for each failed retries. Defaults to `3000`.
 - `reportInterval` - Set how frequent `progress` event emitted by `EasyDL`. Defaults to `2500`.
 - `methodFallback` - use `GET` method instead of `HEAD` to calculate metadata. Useful for downloading S3 signed URLs.
+- `expectResumable` - Indicates if the download should be resumable and bypass the header `accept-ranges` check.
 
 ### Metadata
 

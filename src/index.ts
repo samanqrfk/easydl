@@ -33,6 +33,8 @@ interface Options {
   reportInterval?: number;
   /** Use GET method instead of HEAD for requesting headers */
   methodFallback?: boolean;
+  /** Indicates if the download should be resumable and bypass the header "accept-ranges" check */
+  expectResumable?: boolean;
 }
 
 interface RetryInfo {
@@ -250,6 +252,7 @@ class EasyDl extends EventEmitter {
    * - `retryDelay` - Delay before attempting to retry in ms
    * - `retryBackoff` - Incremental back-off after each retry in ms
    * - `reportInterval` - Set how frequent `progress` event emitted by `EasyDL`
+   * - `expectResumable` - Indicates if the download should be resumable and bypass the header "accept-ranges" check
    */
   constructor(url: string, dest: string, options?: Options) {
     super();
@@ -627,7 +630,7 @@ class EasyDl extends EventEmitter {
         this._opts.connections !== 1 &&
         this.headers &&
         this.headers["content-length"] &&
-        this.headers["accept-ranges"] === "bytes"
+        (this.headers["accept-ranges"] === "bytes" || this._opts.expectResumable)
       ) {
         this.size = this._getSizeFromIncomingHttpHeaders(this.headers);
         this._calcRanges();
