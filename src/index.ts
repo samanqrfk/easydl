@@ -428,6 +428,7 @@ class EasyDl extends EventEmitter {
   }
 
   private async _download(id: number, range?: [number, number]) {
+    const fileName = `${this.savedFilePath}.$$${id}$PART`;
     for (let attempt of this._attempts) {
       let opts = this._opts.httpOptions;
       if (opts && opts.headers && range) {
@@ -445,7 +446,6 @@ class EasyDl extends EventEmitter {
 
       this._reqs[id] = new Request(this.finalAddress, opts);
       let size = (range && range[1] - range[0] + 1) || 0;
-      const fileName = `${this.savedFilePath}.$$${id}$PART`;
       let error: Error | null = null;
       const dest = fs.createWriteStream(fileName);
       dest.on("error", (err) => {
@@ -531,7 +531,11 @@ class EasyDl extends EventEmitter {
       );
     }
     this.emit("error", new Error(`Failed to download chunk #${id} ${range}`));
-    this.destroy();
+    // this.destroy();
+
+    if (fileName) await new Promise((res) => fs.unlink(fileName, res));
+    await delay(<number>this._opts.retryDelay);
+    await this._download(id, range);
   }
 
   private async _syncJobs() {
