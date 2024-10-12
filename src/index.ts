@@ -342,15 +342,13 @@ class EasyDl extends EventEmitter {
             res();
           });
         });
+        
+        await new Promise((res) => fs.unlink(fileName, res));
 
         source.destroy();
         this.emit("build", {
           percentage: 100 * ((i + 1) / this._totalChunks),
         });
-      }
-      for (let i = 0; i < this._totalChunks; i += 1) {
-        const fileName = `${this.savedFilePath}.$$${i}`;
-        await new Promise((res) => fs.unlink(fileName, res));
       }
       dest.destroy();
       this._done = true;
