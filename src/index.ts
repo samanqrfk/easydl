@@ -429,6 +429,27 @@ class EasyDl extends EventEmitter {
 
   private async _download(id: number, range?: [number, number]) {
     const fileName = `${this.savedFilePath}.$$${id}$PART`;
+    
+    // Check if we have a partial download to resume from
+    let partialSize = 0;
+    const partStats = await fileStats(fileName);
+    if (partStats && partStats.size > 0 && range) {
+      partialSize = partStats.size;
+      
+      // Calculate the original chunk size
+      const originalChunkSize = range[1] - range[0] + 1;
+      
+      // If the partial file is already the full size, just rename it and complete
+      if (partialSize >= originalChunkSize) {
+        await rename(fileName, `${this.savedFilePath}.$$${id}`);
+        this._onChunkCompleted(id);
+        return;
+      }
+      
+      // Adjust the range to start from where we left off
+      range = [range[0] + partialSize, range[1]];
+    }
+    
     for (let attempt of this._attempts) {
       let opts = this._opts.httpOptions;
       if (opts && opts.headers && range) {
@@ -447,11 +468,34 @@ class EasyDl extends EventEmitter {
       this._reqs[id] = new Request(this.finalAddress, opts);
       let size = (range && range[1] - range[0] + 1) || 0;
       let error: Error | null = null;
-      const dest = fs.createWriteStream(fileName);
+      
+      // If we're resuming, append to the existing file
+      const dest = fs.createWriteStream(fileName, { flags: partialSize > 0 ? 'a' : 'w' });
       dest.on("error", (err) => {
         if (this._destroyed) return;
         this.emit("error", err);
       });
+
+      // Update the progress to include the already downloaded part
+      if (partialSize > 0) {
+        this.partsProgress[id].bytes = partialSize;
+        
+        // Calculate total chunk size based on range or _ranges if available
+        let totalChunkSize = 0;
+        if (range) {
+          totalChunkSize = range[1] - range[0] + 1 + partialSize;
+        } else if (this._ranges && this._ranges[id]) {
+          totalChunkSize = this._ranges[id][1] - this._ranges[id][0] + 1;
+        } else {
+          totalChunkSize = this.size;
+        }
+        
+        this.partsProgress[id].percentage = (100 * partialSize) / totalChunkSize;
+        (this.totalProgress.bytes as number) += partialSize;
+        this.totalProgress.percentage = this.size
+          ? (100 * <number>this.totalProgress.bytes) / this.size
+          : 0;
+      }
 
       await this._reqs[id]
         .once("ready", ({ statusCode, headers }) => {
@@ -491,8 +535,19 @@ class EasyDl extends EventEmitter {
         })
         .on("data", (data) => {
           (this.partsProgress[id].bytes as number) += data.length;
-          this.partsProgress[id].percentage = size
-            ? (100 * <number>this.partsProgress[id].bytes) / size
+          
+          // Calculate total chunk size based on range or _ranges if available
+          let totalChunkSize = 0;
+          if (range) {
+            totalChunkSize = range[1] - range[0] + 1 + partialSize;
+          } else if (this._ranges && this._ranges[id]) {
+            totalChunkSize = this._ranges[id][1] - this._ranges[id][0] + 1;
+          } else {
+            totalChunkSize = size || this.size;
+          }
+          
+          this.partsProgress[id].percentage = totalChunkSize
+            ? (100 * <number>this.partsProgress[id].bytes) / totalChunkSize
             : 0;
 
           (this.totalProgress.bytes as number) += data.length;
@@ -548,28 +603,49 @@ class EasyDl extends EventEmitter {
         percentage: 0,
       };
 
+      // First check for completed parts
       const stats = await fileStats(`${this.savedFilePath}.$$${i}`);
-      if (!stats) {
-        this._jobs.push(i);
-        continue;
+      if (stats) {
+        const size = this._ranges[i][1] - this._ranges[i][0] + 1;
+        if (stats.size > size)
+          throw new Error(
+            `Expecting maximum chunk size of ${size} but got: ${stats.size}`
+          );
+        if (stats.size === size) {
+          this._downloadedChunks += 1;
+          this.partsProgress[i].percentage = 100;
+          this.partsProgress[i].bytes = size;
+          (this.totalProgress.bytes as number) += size;
+          this.totalProgress.percentage = this.size
+            ? (100 * <number>this.totalProgress.bytes) / this.size
+            : 0;
+          this.isResume = true;
+          continue;
+        }
       }
-      const size = this._ranges[i][1] - this._ranges[i][0] + 1;
-      if (stats.size > size)
-        throw new Error(
-          `Expecting maximum chunk size of ${size} but got: ${stats.size}`
-        );
-      if (stats.size === size) {
-        this._downloadedChunks += 1;
-        this.partsProgress[i].percentage = 100;
-        this.partsProgress[i].bytes = size;
-        (this.totalProgress.bytes as number) += size;
-        this.totalProgress.percentage = this.size
-          ? (100 * <number>this.totalProgress.bytes) / this.size
-          : 0;
-        this.isResume = true;
-      } else {
-        this._jobs.push(i);
+
+      // Then check for partial downloads
+      const partStats = await fileStats(`${this.savedFilePath}.$$${i}$PART`);
+      if (partStats) {
+        // If we have a partial download, rename it to continue from where it left off
+        const size = this._ranges[i][1] - this._ranges[i][0] + 1;
+        if (partStats.size > 0 && partStats.size <= size) {
+          // Update progress information
+          this.partsProgress[i].bytes = partStats.size;
+          this.partsProgress[i].percentage = (100 * partStats.size) / size;
+          (this.totalProgress.bytes as number) += partStats.size;
+          this.totalProgress.percentage = this.size
+            ? (100 * <number>this.totalProgress.bytes) / this.size
+            : 0;
+          this.isResume = true;
+        } else if (partStats.size > size) {
+          // If the partial file is somehow larger than expected, delete it
+          await new Promise((res) => fs.unlink(`${this.savedFilePath}.$$${i}$PART`, res));
+        }
       }
+
+      // Add to jobs to continue downloading
+      this._jobs.push(i);
     }
   }
 
