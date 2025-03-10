@@ -279,3 +279,78 @@ it("should resume previous download", async () => {
     })
   );
 });
+
+it("should preserve PART files after an interrupted download", async () => {
+  const request = jest
+    .spyOn(http, "request")
+    .mockImplementation(mockResumableRequest());
+  const onMetadata = jest.fn();
+  const { fullFileLocation } = createTmpFile();
+
+  const dl = new EasyDl("http://using-http.susan.to", fullFileLocation, {
+    connections: 2,
+  })
+    .on("metadata", onMetadata)
+    .on("progress", () => {
+      dl.destroy();
+    });
+
+  await expect(dl.wait()).resolves.toBe(false);
+  expect(onMetadata).toHaveBeenCalledWith(
+    expect.objectContaining({ resumable: true, isResume: false })
+  );
+  expect(request).toHaveBeenCalledTimes(3);
+
+  const partFiles = fs.readdirSync(path.dirname(fullFileLocation)).filter(file => file.endsWith('$PART'));
+  expect(partFiles.length).toBeGreaterThan(0);
+});
+
+it("should resume download from PART files", async () => {
+  const request = jest
+    .spyOn(http, "request")
+    .mockImplementation(mockResumableRequest());
+  const onMetadata = jest.fn();
+  const { fullFileLocation } = createTmpFile();
+
+  const dl = new EasyDl("http://using-http.susan.to", fullFileLocation, {
+    connections: 2,
+  })
+    .on("metadata", onMetadata)
+    .on("progress", () => {
+      dl.destroy();
+    });
+
+  await expect(dl.wait()).resolves.toBe(false);
+  expect(onMetadata).toHaveBeenCalledWith(
+    expect.objectContaining({ resumable: true, isResume: false })
+  );
+  expect(request).toHaveBeenCalledTimes(3);
+
+  request.mockRestore();
+  const resumeRequest = jest
+    .spyOn(http, "request")
+    .mockImplementation(mockResumableRequest());
+  const onMetadataResume = jest.fn();
+
+  await expect(
+    new EasyDl("http://using-http.susan.to", fullFileLocation, {
+      connections: 2,
+    })
+      .on("metadata", onMetadataResume)
+      .wait()
+  ).resolves.toBe(true);
+
+  // 1 HEAD + 9 parts (out of 10)
+  expect(resumeRequest).toHaveBeenCalledTimes(10);
+
+  expect(onMetadataResume).toHaveBeenCalledWith(
+    expect.objectContaining({
+      isResume: true,
+      resumable: true,
+      progress: expect.arrayContaining([100]),
+    })
+  );
+
+  const partFiles = fs.readdirSync(path.dirname(fullFileLocation)).filter(file => file.endsWith('$PART'));
+  expect(partFiles.length).toBe(0);
+});

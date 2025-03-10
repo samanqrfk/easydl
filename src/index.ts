@@ -550,7 +550,16 @@ class EasyDl extends EventEmitter {
 
       const stats = await fileStats(`${this.savedFilePath}.$$${i}`);
       if (!stats) {
-        this._jobs.push(i);
+        const partStats = await fileStats(`${this.savedFilePath}.$$${i}$PART`);
+        if (partStats) {
+          this.partsProgress[i].bytes = partStats.size;
+          this.partsProgress[i].percentage = (100 * partStats.size) / (this._ranges[i][1] - this._ranges[i][0] + 1);
+          this.totalProgress.bytes = (this.totalProgress.bytes || 0) + partStats.size;
+          this.totalProgress.percentage = this.size ? (100 * this.totalProgress.bytes) / this.size : 0;
+          this._jobs.push(i);
+        } else {
+          this._jobs.push(i);
+        }
         continue;
       }
       const size = this._ranges[i][1] - this._ranges[i][0] + 1;
@@ -738,6 +747,17 @@ class EasyDl extends EventEmitter {
       } catch (e) {}
     }
     this.emit("close");
+  }
+
+  private async _renamePartFiles() {
+    for (let i = 0; i < this._ranges.length; i += 1) {
+      const partFileName = `${this.savedFilePath}.$$${i}$PART`;
+      const finalFileName = `${this.savedFilePath}.$$${i}`;
+      const partStats = await fileStats(partFileName);
+      if (partStats) {
+        await rename(partFileName, finalFileName);
+      }
+    }
   }
 }
 
