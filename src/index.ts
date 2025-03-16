@@ -429,17 +429,33 @@ class EasyDl extends EventEmitter {
 
   private async _download(id: number, range?: [number, number]) {
     const fileName = `${this.savedFilePath}.$$${id}$PART`;
+    
+    // Check if we have a partial download to resume from
+    let bytesDownloaded = 0;
+    const partStats = await fileStats(fileName);
+    if (partStats && range) {
+      bytesDownloaded = partStats.size;
+      // Update the progress with already downloaded bytes
+      this.partsProgress[id].bytes = bytesDownloaded;
+      const totalSize = range[1] - range[0] + 1;
+      this.partsProgress[id].percentage = totalSize ? (100 * bytesDownloaded) / totalSize : 0;
+    }
+    
     for (let attempt of this._attempts) {
       let opts = this._opts.httpOptions;
       if (opts && opts.headers && range) {
+        // Adjust range to start from where we left off
+        const adjustedStart = range[0] + bytesDownloaded;
         const headers = Object.assign({}, opts.headers, {
-          Range: `bytes=${range[0]}-${range[1]}`,
+          Range: `bytes=${adjustedStart}-${range[1]}`,
         });
         opts = Object.assign({}, opts, { headers });
       } else if (range) {
+        // Adjust range to start from where we left off
+        const adjustedStart = range[0] + bytesDownloaded;
         opts = Object.assign({}, opts, {
           headers: {
-            Range: `bytes=${range[0]}-${range[1]}`,
+            Range: `bytes=${adjustedStart}-${range[1]}`,
           },
         });
       }
@@ -447,7 +463,11 @@ class EasyDl extends EventEmitter {
       this._reqs[id] = new Request(this.finalAddress, opts);
       let size = (range && range[1] - range[0] + 1) || 0;
       let error: Error | null = null;
-      const dest = fs.createWriteStream(fileName);
+      
+      // If bytesDownloaded > 0, we need to append to the existing file
+      const dest = fs.createWriteStream(fileName, {
+        flags: bytesDownloaded > 0 ? 'a' : 'w'
+      });
       dest.on("error", (err) => {
         if (this._destroyed) return;
         this.emit("error", err);
@@ -531,9 +551,10 @@ class EasyDl extends EventEmitter {
       );
     }
     this.emit("error", new Error(`Failed to download chunk #${id} ${range}`));
-    // this.destroy();
-
-    if (fileName) await new Promise((res) => fs.unlink(fileName, res));
+    // Don't destroy the entire download and don't delete the PART file
+    // This allows for resuming the download later
+    
+    // Wait before retrying to prevent rapid retry loops
     await delay(<number>this._opts.retryDelay);
     await this._download(id, range);
   }
@@ -568,6 +589,19 @@ class EasyDl extends EventEmitter {
           : 0;
         this.isResume = true;
       } else {
+        // Check for partly downloaded chunks (PART files)
+        const partStats = await fileStats(`${this.savedFilePath}.$$${i}$PART`);
+        if (partStats) {
+          // If PART file exists, we can resume from it
+          const size = this._ranges[i][1] - this._ranges[i][0] + 1;
+          // Update progress for this part
+          this.partsProgress[i].bytes = partStats.size;
+          this.partsProgress[i].percentage = size ? (100 * partStats.size) / size : 0;
+          (this.totalProgress.bytes as number) += partStats.size;
+          this.isResume = true;
+        }
+        
+        // Add to jobs regardless of whether we have a PART file or not
         this._jobs.push(i);
       }
     }

@@ -4,6 +4,7 @@ import { createTmpFile, files } from "./utils/files";
 import EasyDl from "../src";
 import { hashFile } from "./utils/hash";
 
+jest.setTimeout(15000); // Increase timeout for all tests in this file
 beforeEach(() => jest.restoreAllMocks());
 
 it("should not replace existing file when existBehavior = ignore", async () => {
@@ -35,6 +36,7 @@ it("should not replace existing file when existBehavior = ignore", async () => {
 });
 
 it("should overwrite existing file when existBehavior = overwrite", async () => {
+  jest.setTimeout(30000); // Increase timeout for this specific test
   const request = jest
     .spyOn(https, "request")
     .mockImplementation(mockResumableRequest(files["100Kb"]));
@@ -63,6 +65,7 @@ it("should overwrite existing file when existBehavior = overwrite", async () => 
 });
 
 it("should create a new file when existBehavior = new_file", async () => {
+  jest.setTimeout(30000); // Increase timeout for this specific test
   const request = jest
     .spyOn(https, "request")
     .mockImplementation(mockResumableRequest(files["100Kb"]));

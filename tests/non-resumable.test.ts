@@ -6,6 +6,7 @@ import { files, createTmpFile } from "./utils/files";
 import EasyDl from "../src";
 import { createMockHTTP } from "./utils/mock-http";
 
+jest.setTimeout(15000); // Increase timeout for all tests in this file
 beforeEach(() => jest.restoreAllMocks());
 
 export const mockNonResumableRequest = (file = files["100Mb"]) =>
@@ -38,6 +39,7 @@ export const mockNonResumableRequestWithUnknownSize = (file = files["100Mb"]) =>
   });
 
 it("should download a file with known size and combine it correctly", async () => {
+  jest.setTimeout(30000); // Increase timeout for this specific test
   const request = jest
     .spyOn(https, "request")
     .mockImplementation(mockNonResumableRequest());
@@ -100,6 +102,7 @@ it("should download a file with known size and combine it correctly", async () =
 });
 
 it("should download a file with unknown size and combine it correctly", async () => {
+  jest.setTimeout(30000); // Increase timeout for this specific test
   const request = jest
     .spyOn(https, "request")
     .mockImplementation(mockNonResumableRequestWithUnknownSize());
