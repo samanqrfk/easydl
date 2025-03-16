@@ -510,7 +510,10 @@ class EasyDl extends EventEmitter {
         .wait();
 
       safeRun(dest.destroy);
+      
+      // If download is interrupted/destroyed, we should keep the partial chunks
       if (this._destroyed) return;
+      
       if (!error) {
         await rename(
           `${this.savedFilePath}.$$${id}$PART`,
@@ -530,12 +533,17 @@ class EasyDl extends EventEmitter {
           <number>this._opts.retryBackoff * (attempt - 1)
       );
     }
-    this.emit("error", new Error(`Failed to download chunk #${id} ${range}`));
-    // this.destroy();
-
-    if (fileName) await new Promise((res) => fs.unlink(fileName, res));
-    await delay(<number>this._opts.retryDelay);
-    await this._download(id, range);
+    
+    // Only emit error if we're not destroyed (interrupted by user)
+    if (!this._destroyed) {
+      this.emit("error", new Error(`Failed to download chunk #${id} ${range}`));
+    
+      // Delete the incomplete file only if there's a non-user-initiated error
+      if (fileName) await new Promise((res) => fs.unlink(fileName, res));
+      
+      await delay(<number>this._opts.retryDelay);
+      await this._download(id, range);
+    }
   }
 
   private async _syncJobs() {
@@ -548,26 +556,54 @@ class EasyDl extends EventEmitter {
         percentage: 0,
       };
 
+      // First check for completed chunks (filename.$$i)
       const stats = await fileStats(`${this.savedFilePath}.$$${i}`);
-      if (!stats) {
-        this._jobs.push(i);
-        continue;
+      if (stats) {
+        const size = this._ranges[i][1] - this._ranges[i][0] + 1;
+        if (stats.size > size)
+          throw new Error(
+            `Expecting maximum chunk size of ${size} but got: ${stats.size}`
+          );
+        if (stats.size === size) {
+          this._downloadedChunks += 1;
+          this.partsProgress[i].percentage = 100;
+          this.partsProgress[i].bytes = size;
+          (this.totalProgress.bytes as number) += size;
+          this.totalProgress.percentage = this.size
+            ? (100 * <number>this.totalProgress.bytes) / this.size
+            : 0;
+          this.isResume = true;
+          continue;
+        }
       }
-      const size = this._ranges[i][1] - this._ranges[i][0] + 1;
-      if (stats.size > size)
-        throw new Error(
-          `Expecting maximum chunk size of ${size} but got: ${stats.size}`
-        );
-      if (stats.size === size) {
-        this._downloadedChunks += 1;
-        this.partsProgress[i].percentage = 100;
-        this.partsProgress[i].bytes = size;
-        (this.totalProgress.bytes as number) += size;
-        this.totalProgress.percentage = this.size
-          ? (100 * <number>this.totalProgress.bytes) / this.size
-          : 0;
-        this.isResume = true;
+      
+      // Then check for partial chunks (filename.$$i$PART)
+      const partialStats = await fileStats(`${this.savedFilePath}.$$${i}$PART`);
+      if (partialStats) {
+        // If we have a partial file, rename it to completed if size matches
+        const size = this._ranges[i][1] - this._ranges[i][0] + 1;
+        if (partialStats.size === size) {
+          await rename(
+            `${this.savedFilePath}.$$${i}$PART`,
+            `${this.savedFilePath}.$$${i}`
+          );
+          this._downloadedChunks += 1;
+          this.partsProgress[i].percentage = 100;
+          this.partsProgress[i].bytes = size;
+          (this.totalProgress.bytes as number) += size;
+          this.totalProgress.percentage = this.size
+            ? (100 * <number>this.totalProgress.bytes) / this.size
+            : 0;
+          this.isResume = true;
+        } else {
+          // Otherwise, delete partial file and queue chunk for download
+          await new Promise((res) => 
+            fs.unlink(`${this.savedFilePath}.$$${i}$PART`, () => res(undefined))
+          );
+          this._jobs.push(i);
+        }
       } else {
+        // No complete or partial chunk found, queue it for download
         this._jobs.push(i);
       }
     }
@@ -697,8 +733,23 @@ class EasyDl extends EventEmitter {
    */
   async metadata(): Promise<Metadata> {
     process.nextTick(this._start);
-    if (this._destroyed)
-      throw new Error("Calling metadata() on destroyed instance.");
+    
+    // Even if instance is destroyed, provide metadata if available
+    if (this._destroyed) {
+      // Return available metadata from the current state
+      return <Metadata>{
+        size: this.size,
+        chunks: this._ranges.map(([a, b]) => b - a + 1),
+        isResume: this.isResume,
+        progress: this.partsProgress.map((progress) => progress.percentage),
+        finalAddress: this.finalAddress,
+        parallel: this.parallel,
+        resumable: this.resumable,
+        headers: this.headers,
+        savedFilePath: this.savedFilePath,
+      };
+    }
+    
     return await new Promise<Metadata>((res, rej) => {
       this.once("error", rej);
       this.once("metadata", res);
