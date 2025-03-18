@@ -438,8 +438,16 @@ class EasyDl extends EventEmitter {
       // Update the progress with already downloaded bytes
       this.partsProgress[id].bytes = bytesDownloaded;
       const totalSize = range[1] - range[0] + 1;
-      this.partsProgress[id].percentage = totalSize ? (100 * bytesDownloaded) / totalSize : 0;
+      this.partsProgress[id].percentage = totalSize
+        ? (100 * bytesDownloaded) / totalSize
+        : 0;
+      (this.totalProgress.bytes as number) += bytesDownloaded;
+      this.totalProgress.percentage = this.size
+        ? (100 * <number>this.totalProgress.bytes) / this.size
+        : 0;
+      this._report(id);
     }
+
     
     for (let attempt of this._attempts) {
       let opts = this._opts.httpOptions;
@@ -462,6 +470,7 @@ class EasyDl extends EventEmitter {
 
       this._reqs[id] = new Request(this.finalAddress, opts);
       let size = (range && range[1] - range[0] + 1) || 0;
+      let adjustedSize = size - bytesDownloaded;
       let error: Error | null = null;
       
       // If bytesDownloaded > 0, we need to append to the existing file
@@ -488,9 +497,9 @@ class EasyDl extends EventEmitter {
               parseInt(headers["content-length"])) ||
             0;
 
-          if (size && contentLength && size !== contentLength) {
+          if (adjustedSize && contentLength && adjustedSize !== contentLength) {
             error = new Error(
-              `Expecting content length of ${size} but got ${contentLength} when downloading chunk ${id}`
+              `Expecting content length of ${adjustedSize} but got ${contentLength} when downloading chunk ${id}`
             );
             this._reqs[id].destroy();
             return;
