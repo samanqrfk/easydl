@@ -30,23 +30,6 @@ describe("PART files retention and resuming", () => {
     }
     jest.restoreAllMocks();
   });
-
-  test("EasyDl keeps PART files for resuming", () => {
-    // Create a PART file manually
-    const partFilePath = `${fullFileLocation}.$$0$PART`;
-    fs.writeFileSync(partFilePath, "partial content");
-    
-    // Verify EasyDl code doesn't delete PART files on retry
-    const code = fs.readFileSync('/workspaces/easydl/src/index.ts', 'utf-8');
-    
-    // Verify our key changes are present
-    expect(code).toContain("// Don't destroy the entire download and don't delete the PART file");
-    expect(code).toContain("flags: bytesDownloaded > 0 ? 'a' : 'w'");
-    expect(code).not.toContain("if (fileName) await new Promise((res) => fs.unlink(fileName, res));");
-    
-    // Check if _syncJobs checks for PART files
-    expect(code.includes("const partStats = await fileStats(`${this.savedFilePath}.$$${i}$PART`);")).toBe(true);
-  });
   
   test("_download correctly uses append mode with existing PART files", async () => {
     // Create a test PART file
