@@ -325,6 +325,27 @@ class EasyDl extends EventEmitter {
     }
   }
 
+  private async _verifyChunks(): Promise<boolean> {
+    if (this._ranges.length <= 1) return true;
+    let allChunksValid = true;
+    for (let i = 0; i < this._totalChunks; i += 1) {
+      const fileName = `${this.savedFilePath}.$$${i}`;
+      let isValid = await validate(fileName);
+      if (isValid) {
+        const stats = await fileStats(fileName);
+        const expectedSize = this._ranges[i][1] - this._ranges[i][0] + 1;
+        isValid = stats?.size === expectedSize;
+      }
+      if (!isValid) {
+        this._jobs.push(i);
+        this._downloadedChunks -= 1;
+        this.emit("error", new Error(`Chunk #${i} corrupted or incomplete, will retry`));
+        allChunksValid = false;
+      }
+    }
+    return allChunksValid;
+  }
+
   private async _buildFile() {
     if (this._destroyed) return;
     this.emit("build", { percentage: 0 });
@@ -361,7 +382,7 @@ class EasyDl extends EventEmitter {
     }
   }
 
-  private _onChunkCompleted(id: number) {
+  private async _onChunkCompleted(id: number) {
     if (!this._reqs[id]) return;
     this._reqs[id].destroy();
     delete this._reqs[id];
@@ -369,7 +390,13 @@ class EasyDl extends EventEmitter {
     this.partsProgress[id].speed = 0;
     this._workers -= 1;
     this._downloadedChunks += 1;
-    if (this._downloadedChunks === this._totalChunks) return this._buildFile();
+    if (this._downloadedChunks === this._totalChunks) {
+      const allChunksValid = await this._verifyChunks();
+      if (allChunksValid) {
+        await this._buildFile();
+        return;
+      }
+    }
     this._processChunks();
   }
 
@@ -545,7 +572,7 @@ class EasyDl extends EventEmitter {
           `${this.savedFilePath}.$$${id}$PART`,
           `${this.savedFilePath}.$$${id}`
         );
-        this._onChunkCompleted(id);
+        await this._onChunkCompleted(id);
         return;
       }
 
@@ -681,8 +708,14 @@ class EasyDl extends EventEmitter {
         this._calcRanges();
         await this._syncJobs();
         this._totalChunks = this._ranges.length;
-        if (!this._jobs.length) this._buildFile();
-        else this._processChunks();
+        if (!this._jobs.length) {
+          const allChunksValid = await this._verifyChunks();
+          if (allChunksValid) this._buildFile();
+          else this._processChunks();
+        }
+        else {
+          this._processChunks();
+        }
       } else {
         if (this.headers && this.headers["content-length"])
           this.size = this._getSizeFromIncomingHttpHeaders(this.headers);
