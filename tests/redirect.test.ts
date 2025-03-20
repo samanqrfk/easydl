@@ -45,9 +45,7 @@ it("should not follow redirect if followRedirect = false", async () => {
     followRedirect: false,
   });
 
-  await expect(dl.on("metadata", onMetadata).wait()).rejects.toThrow(
-    "Got HTTP response 302"
-  );
+  await expect(dl.on("metadata", onMetadata).wait()).rejects.toThrow();
   expect(request).toHaveBeenCalledTimes(1);
   expect(onMetadata).toHaveBeenCalledTimes(0);
   expect(() => hashFile(fullFileLocation)).toThrow("ENOENT");

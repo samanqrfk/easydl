@@ -339,6 +339,11 @@ class EasyDl extends EventEmitter {
       if (!isValid) {
         this._jobs.push(i);
         this._downloadedChunks -= 1;
+        this.totalProgress.bytes = <number>this.totalProgress.bytes - <number>this.partsProgress[i].bytes;
+        this.totalProgress.percentage = this.size ? (100 * <number>this.totalProgress.bytes) / this.size : 0;
+        this.partsProgress[i].percentage = 0;
+        this.partsProgress[i].bytes = 0;
+        this._report(i, true);
         allChunksValid = false;
       }
     }
