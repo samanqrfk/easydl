@@ -339,7 +339,6 @@ class EasyDl extends EventEmitter {
       if (!isValid) {
         this._jobs.push(i);
         this._downloadedChunks -= 1;
-        this.emit("error", new Error(`Chunk #${i} corrupted or incomplete, will retry`));
         allChunksValid = false;
       }
     }
